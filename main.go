@@ -205,8 +205,11 @@ func main() {
 
 	config := ConfigFFile(os.Args[2])
 
-	hat := ImageFFile(config.HatFilenames[0])
-	defer hat.Close()
+	var hats []gocv.Mat
+	for i := 0; i < len(config.HatFilenames); i++ {
+		hats = append(hats, ImageFFile(config.HatFilenames[i]))
+		defer hats[i].Close()
+	}
 
 	neuralConfig := NeuralFConfig(config)
 	defer neuralConfig.Network.Close()
@@ -219,7 +222,7 @@ func main() {
 		confidence := prob.GetFloatAt(0, i+2)
 		if confidence > confidenceThresh {
 			roiRect := GetInterestingRect(prob, target, i)
-			scaledHat := ScaleImageToRegion(hat, roiRect, config)
+			scaledHat := ScaleImageToRegion(hats[i%len(hats)], roiRect, config)
 			defer scaledHat.Close()
 			PasteHat(scaledHat, roiRect, &target, config)
 			window.IMShow(target)
