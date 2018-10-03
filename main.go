@@ -1,27 +1,64 @@
 // Based on gocv dnn-detection, scan an image for faces and place a hat on them.
-// 
-// Example model file from:
-// https://github.com/opencv/opencv_3rdparty/raw/dnn_samples_face_detector_20170830/res10_300x300_ssd_iter_140000.caffemodel
-//
-// Example network file from:
-// https://raw.githubusercontent.com/opencv/opencv/master/samples/dnn/face_detector/deploy.prototxt
-// 
-// go run main.go data/donald.jpg data/jester-hat.png data/res10_300x300_ssd_iter_140000.caffemodel data/deploy.prototxt
-//
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"gocv.io/x/gocv"
 	"image"
 	"log"
+	"io/ioutil"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
-const hatScaleX = 1.35
-const hatTranslateY = 0.75
+type HatsConfig struct {
+	HatFilenames []string
+	ClassifierModelFilename string
+	ClassifierNetworkFilename string
+	ScaleX float64
+	TranslateYPct float64
+}
+
+type NeuralConfig struct {
+	NetBackend gocv.NetBackendType
+	NetTargetCPU gocv.NetTargetType
+	Network gocv.Net
+	Ratio float64
+	Mean gocv.Scalar
+	SwapRGB bool
+}
+
+func ConfigFFile(filename string) HatsConfig {
+	log.Printf("config at: %v", filename)
+	var config HatsConfig
+	file, e := ioutil.ReadFile(filename)
+	if e != nil {
+		log.Fatal(errors.New(fmt.Sprintf(
+			"Error reading configuration from: %v\n%v", filename, e)))
+	}
+	json.Unmarshal(file, &config)
+
+	// Make all fields relative to configuration file location
+	fileSepIdx := strings.LastIndex(filename, "/")
+	var prefix = "./"
+	if fileSepIdx >= 0 {
+		prefix = filename[0:fileSepIdx]
+	}
+	fields := [...]*string{
+		&config.ClassifierModelFilename,
+		&config.ClassifierNetworkFilename }
+	for _, elt := range fields {
+		*elt = fmt.Sprintf("%v/%v", prefix, *elt)
+	}
+	for i, elt := range config.HatFilenames {
+		config.HatFilenames[i] = fmt.Sprintf("%v/%v", prefix, elt)
+	}
+
+	return config
+}
 
 // Take the results from Net.Forward() and the source image and return the 
 // interesting boundary.
@@ -42,9 +79,52 @@ func ImageFFile(filename string) gocv.Mat {
 	return img
 }
 
-func PasteHat(hat gocv.Mat, roi image.Rectangle, target *gocv.Mat) {
+func LocateHeads(target gocv.Mat, config NeuralConfig) (gocv.Mat, gocv.Mat) {
+	blob := gocv.BlobFromImage(
+		target, config.Ratio, image.Pt(300, 300), config.Mean,
+		config.SwapRGB, false)
+	config.Network.SetInput(blob, "")
+	prob := config.Network.Forward("")
+
+	return prob, blob
+}
+
+func NeuralFConfig(config HatsConfig) NeuralConfig {
+	var result NeuralConfig
+
+	result.NetBackend = gocv.NetBackendDefault
+	result.NetTargetCPU = gocv.NetTargetCPU
+	result.Network = gocv.ReadNet(
+		config.ClassifierNetworkFilename,
+		config.ClassifierModelFilename)
+	if result.Network.Empty() {
+		log.Fatal(errors.New(fmt.Sprintf(
+			"Error reading network from model: %v network: %v",
+			config.ClassifierModelFilename,
+			config.ClassifierNetworkFilename)))
+	}
+	result.Network.SetPreferableBackend(
+		gocv.NetBackendType(result.NetBackend))
+	result.Network.SetPreferableTarget(
+		gocv.NetTargetType(result.NetTargetCPU))
+
+	// Caffe vs TF magic scaling factors
+  if filepath.Ext(config.ClassifierModelFilename) == ".caffemodel" {
+    result.Ratio = 1.0
+    result.Mean = gocv.NewScalar(104, 177, 123, 0)
+    result.SwapRGB = false
+  } else {
+    result.Ratio = 1.0 / 127.5
+    result.Mean = gocv.NewScalar(127.5, 127.5, 127.5, 0)
+    result.SwapRGB = true
+  }
+
+	return result
+}
+
+func PasteHat(hat gocv.Mat, roi image.Rectangle, target *gocv.Mat, config HatsConfig) {
 	// shift the hat destination up and scale to fit hat width
-	dy := int(float64(roi.Dy()) * hatTranslateY)
+	dy := int(float64(roi.Dy()) * config.TranslateYPct)
 	roiCX := roi.Min.X + int(0.5 * float64(roi.Dx()))
 	halfHatWidth := int(0.5 * float64(hat.Cols()))
 
@@ -101,9 +181,9 @@ func PasteHat(hat gocv.Mat, roi image.Rectangle, target *gocv.Mat) {
 }
 
 // Take an image and scale it to the width of the roi with an additional margin.
-func ScaleImageToRegion(img gocv.Mat, roi image.Rectangle) gocv.Mat {
+func ScaleImageToRegion(img gocv.Mat, roi image.Rectangle, config HatsConfig) gocv.Mat {
 	scaledImg := gocv.NewMat()
-	scaledWidth := int(float64(roi.Dx()) * hatScaleX)
+	scaledWidth := int(float64(roi.Dx()) * config.ScaleX)
 	scaledHeight := img.Rows() * scaledWidth / img.Cols()
 	gocv.Resize(img, &scaledImg, image.Pt(scaledWidth, scaledHeight),
 		0, 0, gocv.InterpolationCubic)
@@ -112,8 +192,8 @@ func ScaleImageToRegion(img gocv.Mat, roi image.Rectangle) gocv.Mat {
 
 
 func main() {
-	if len(os.Args) < 5 {
-		log.Println("How to run:\n\tgo run main.go [img-file] [hat-file] [model-file] [network-config-file]")
+	if len(os.Args) < 2 {
+		log.Println("How to run:\n\tgo run main.go [img-file] [config-json]")
 		return
 	}
 
@@ -123,51 +203,25 @@ func main() {
 	target := ImageFFile(os.Args[1])
 	defer target.Close()
 
-	hat := ImageFFile(os.Args[2])
+	config := ConfigFFile(os.Args[2])
+
+	hat := ImageFFile(config.HatFilenames[0])
 	defer hat.Close()
 
-	modelFilename := os.Args[3]
-	netConfigFilename := os.Args[4]
-	netBackend := gocv.NetBackendDefault
-	netTargetCPU := gocv.NetTargetCPU
-	net := gocv.ReadNet(modelFilename, netConfigFilename)
-	if net.Empty() {
-		log.Fatal(errors.New(fmt.Sprintf(
-			"Error reading network from model: %v network: %v", modelFilename, netConfigFilename)))
-	}
-	defer net.Close()
-	net.SetPreferableBackend(gocv.NetBackendType(netBackend))
-	net.SetPreferableTarget(gocv.NetTargetType(netTargetCPU))
-
-	var ratio float64
-  var mean gocv.Scalar
-  var swapRGB bool
-
-	// Caffe vs TF magic scaling factors
-  if filepath.Ext(modelFilename) == ".caffemodel" {
-    ratio = 1.0
-    mean = gocv.NewScalar(104, 177, 123, 0)
-    swapRGB = false
-  } else {
-    ratio = 1.0 / 127.5
-    mean = gocv.NewScalar(127.5, 127.5, 127.5, 0)
-    swapRGB = true
-  }
+	neuralConfig := NeuralFConfig(config)
+	defer neuralConfig.Network.Close()
 
 	window.IMShow(target)
-	// locate heads
-	blob := gocv.BlobFromImage(target, ratio, image.Pt(300, 300), mean, swapRGB, false)
-	net.SetInput(blob, "")
-	prob := net.Forward("")
+	prob, blob := LocateHeads(target, neuralConfig)
 
 	const confidenceThresh = 0.5
 	for i := 0; i < prob.Total(); i += 7 {
 		confidence := prob.GetFloatAt(0, i+2)
 		if confidence > confidenceThresh {
 			roiRect := GetInterestingRect(prob, target, i)
-			scaledHat := ScaleImageToRegion(hat, roiRect)
+			scaledHat := ScaleImageToRegion(hat, roiRect, config)
 			defer scaledHat.Close()
-			PasteHat(scaledHat, roiRect, &target)
+			PasteHat(scaledHat, roiRect, &target, config)
 			window.IMShow(target)
 		}
 	}
