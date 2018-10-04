@@ -2,6 +2,7 @@
  	"HatFilenames" : ["santa.png", "crown.png"],
 	"ClassifierModelFilename" : "res10_300x300_ssd_iter_140000.caffemodel",
 	"ClassifierNetworkFilename" : "deploy.prototxt",
-	"ScaleX": 1.5,
-	"TranslateYPct" : 0.75 
+	"ScaleX": [1.5],
+	"TranslateXPct" : [0.15, 0.0],
+	"TranslateYPct" : [0.75]
 }

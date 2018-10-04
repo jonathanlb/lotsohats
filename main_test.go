@@ -27,14 +27,24 @@ func TestReadConfig(t *testing.T) {
 			config.ClassifierNetworkFilename)
 	}
 
-	if math.Abs(config.ScaleX - 1.5) > 0.001 {
-		t.Errorf(`Cannot read config width scaling, found %f`, config.ScaleX)
+	if math.Abs(config.ScaleX[0] - 1.5) > 0.001 {
+		t.Errorf(`Cannot read config width scaling, found %f`, config.ScaleX[0])
 	}
 
-	if math.Abs(config.TranslateYPct - 0.75) > 0.001 {
-		t.Errorf(`Cannot read config vertical scaling, found %f`,
-			config.TranslateYPct)
+  if len(config.TranslateYPct) != 1 {
+		t.Errorf(`Unexpected vertical shifting, found %v`, config.TranslateYPct)
+  } else if math.Abs(config.TranslateYPct[0] - 0.75) > 0.001 {
+		t.Errorf(`Cannot read config vertical shifting, found %f`,
+			config.TranslateYPct[0])
 	}
+
+  if len(config.TranslateXPct) != 1 {
+		t.Errorf(`Unexpected horizontal shifting, found %v`, config.TranslateXPct)
+  } else if math.Abs(config.TranslateXPct[0] - 0.0) > 0.001 {
+		t.Errorf(`Cannot read config horizontal shifting, found %f`,
+			config.TranslateXPct[0])
+	}
+
 }
 
 func TestReadImage(t *testing.T) {
@@ -57,7 +67,7 @@ func TestPasteHat(t *testing.T) {
 
 	target := gocv.NewMatWithSize(1000, 1000, gocv.MatTypeCV8U)
 	roi := image.Rect(200, 200, 300, 300)
-	PasteHat(hat, roi, &target, config)
+	PasteHat(hat, roi, &target, config, 0)
 
 	if 0xff != target.GetUCharAt(200, 250) {
 		t.Errorf(`Did not paste pixel at 250x200 (%d)`,
@@ -77,7 +87,7 @@ func TestPasteHatOffCorner(t *testing.T) {
 
 	target := gocv.NewMatWithSize(1000, 1000, gocv.MatTypeCV8U)
 	roi := image.Rect(900, 0, 990, 100)
-	PasteHat(hat, roi, &target, config)
+	PasteHat(hat, roi, &target, config, 0)
 
 	if 0xff != target.GetUCharAt(10, 945) {
 		t.Errorf(`Did not paste pixel at 10x945 (%d)`,
@@ -91,7 +101,7 @@ func TestScaleImage(t *testing.T) {
 	defer img.Close()
 	roi := image.Rect(2000, 1000, 2100, 1100)
 
-	scaledImg := ScaleImageToRegion(img, roi, config)
+	scaledImg := ScaleImageToRegion(img, roi, config, 0)
 	defer scaledImg.Close()
 
 	if scaledImg.Cols() != 150 || scaledImg.Rows() != 240 {

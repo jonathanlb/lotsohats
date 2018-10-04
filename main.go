@@ -19,8 +19,9 @@ type HatsConfig struct {
 	HatFilenames []string
 	ClassifierModelFilename string
 	ClassifierNetworkFilename string
-	ScaleX float64
-	TranslateYPct float64
+	ScaleX []float64
+	TranslateXPct []float64
+	TranslateYPct []float64
 }
 
 type NeuralConfig struct {
@@ -57,6 +58,17 @@ func ConfigFFile(filename string) HatsConfig {
 	for i, elt := range config.HatFilenames {
 		config.HatFilenames[i] = fmt.Sprintf("%v/%v", prefix, elt)
 	}
+
+  if config.ScaleX == nil {
+    config.ScaleX = []float64{1.0}
+  }
+  if config.TranslateXPct == nil {
+    config.TranslateXPct = []float64{0.0}
+  }
+  if config.TranslateYPct == nil {
+    config.TranslateYPct = []float64{0.0}
+  }
+
 
 	return config
 }
@@ -128,16 +140,17 @@ func NeuralFConfig(config HatsConfig) NeuralConfig {
 	return result
 }
 
-func PasteHat(hat gocv.Mat, roi image.Rectangle, target *gocv.Mat, config HatsConfig) {
-	// shift the hat destination up and scale to fit hat width
-	dy := int(float64(roi.Dy()) * config.TranslateYPct)
+func PasteHat(hat gocv.Mat, roi image.Rectangle, target *gocv.Mat, config HatsConfig, i int) {
+	// shift the hat destination and scale to fit hat width
+	dy := int(float64(roi.Dy()) * config.TranslateYPct[i % len(config.TranslateYPct)])
+	dx := int(float64(roi.Dx()) * config.TranslateXPct[i % len(config.TranslateXPct)])
 	roiCX := roi.Min.X + int(0.5 * float64(roi.Dx()))
 	halfHatWidth := int(0.5 * float64(hat.Cols()))
 
 	underHatRect := image.Rect(
-		roiCX - halfHatWidth, // left
+		roiCX + dx - halfHatWidth, // left
 		roi.Max.Y - dy - hat.Rows(), // top
-		roiCX + halfHatWidth, // right
+		roiCX + dx + halfHatWidth, // right
 		roi.Max.Y - dy) // bottom
 
 	// clip to stay in target
@@ -179,17 +192,23 @@ func PasteHat(hat gocv.Mat, roi image.Rectangle, target *gocv.Mat, config HatsCo
 			clipRect.Max.Y++
 		}
 	}
+
+	log.Printf("Hat %dx%d",
+    clipRect.Dx(), clipRect.Dy())
+	log.Printf("Target %dx%d @ (%d,%d)->(%d,%d)",
+    underHatRect.Dx(), underHatRect.Dy(),
+    underHatRect.Min.X, underHatRect.Max.Y,
+    underHatRect.Max.X, underHatRect.Min.Y)
+
 	clippedHat := hat.Region(clipRect)
 	underHat := target.Region(underHatRect)
-	log.Printf("Hat %dx%d", clippedHat.Cols(), clippedHat.Rows())
-	log.Printf("Target %dx%d @ (%d,%d)->(%d,%d)", underHatRect.Dx(), underHatRect.Dy(), underHatRect.Min.X, underHatRect.Max.Y, underHatRect.Max.X, underHatRect.Min.Y)
 	gocv.AddWeighted(clippedHat, 1.0, underHat, 1.0, 0.0, &underHat)
 }
 
 // Take an image and scale it to the width of the roi with an additional margin.
-func ScaleImageToRegion(img gocv.Mat, roi image.Rectangle, config HatsConfig) gocv.Mat {
+func ScaleImageToRegion(img gocv.Mat, roi image.Rectangle, config HatsConfig, i int) gocv.Mat {
 	scaledImg := gocv.NewMat()
-	scaledWidth := int(float64(roi.Dx()) * config.ScaleX)
+	scaledWidth := int(float64(roi.Dx()) * config.ScaleX[i % len(config.ScaleX)])
 	scaledHeight := img.Rows() * scaledWidth / img.Cols()
 	gocv.Resize(img, &scaledImg, image.Pt(scaledWidth, scaledHeight),
 		0, 0, gocv.InterpolationCubic)
@@ -246,10 +265,11 @@ func main() {
     for i := 0; i < prob.Total(); i += 7 {
       confidence := prob.GetFloatAt(0, i+2)
       if confidence > confidenceThresh {
+        j := i / 7
         roiRect := GetInterestingRect(prob, target, i)
-        scaledHat := ScaleImageToRegion(hats[i%len(hats)], roiRect, config)
+        scaledHat := ScaleImageToRegion(hats[j%len(hats)], roiRect, config, j)
         defer scaledHat.Close()
-        PasteHat(scaledHat, roiRect, &target, config)
+        PasteHat(scaledHat, roiRect, &target, config, j)
       }
     }
     window.IMShow(target)
