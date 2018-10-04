@@ -99,3 +99,12 @@ func TestScaleImage(t *testing.T) {
 			scaledImg.Cols(), scaledImg.Rows())
 	}
 }
+
+func TestWebcamMatch(t *testing.T) {
+  if IsDeviceId("data/foo.jpg") {
+    t.Errorf(`Expected "data/foo.jpg" to match as file`)
+  }
+  if !IsDeviceId("0") {
+    t.Errorf(`Expected "0" to match as device`)
+  }
+}

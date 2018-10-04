@@ -23,5 +23,5 @@ Create a JSON configuration file resembling the following
 ```
 
 ```bash
-go run main.go data/trump.png data/crown-config.json
+go run main.go data/multi.json data/sense8.png 
 ```

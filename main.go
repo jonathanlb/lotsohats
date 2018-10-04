@@ -11,6 +11,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+  "regexp"
 	"strings"
 )
 
@@ -77,6 +78,11 @@ func ImageFFile(filename string) gocv.Mat {
 		log.Fatal(errors.New(fmt.Sprintf("Error reading image from: %v", filename)))
 	}
 	return img
+}
+
+func IsDeviceId(fileOrDeviceName string) bool {
+  matched, _ := regexp.Match("^[0-9]", []byte(fileOrDeviceName))
+  return matched
 }
 
 func LocateHeads(target gocv.Mat, config NeuralConfig) (gocv.Mat, gocv.Mat) {
@@ -193,17 +199,11 @@ func ScaleImageToRegion(img gocv.Mat, roi image.Rectangle, config HatsConfig) go
 
 func main() {
 	if len(os.Args) < 2 {
-		log.Println("How to run:\n\tgo run main.go [img-file] [config-json]")
+		log.Println("How to run:\n\tgo run main.go [config-json] [img-file]")
 		return
 	}
 
-	window := gocv.NewWindow("Lots-o-hats")
-	defer window.Close()
-
-	target := ImageFFile(os.Args[1])
-	defer target.Close()
-
-	config := ConfigFFile(os.Args[2])
+	config := ConfigFFile(os.Args[1])
 
 	var hats []gocv.Mat
 	for i := 0; i < len(config.HatFilenames); i++ {
@@ -214,28 +214,61 @@ func main() {
 	neuralConfig := NeuralFConfig(config)
 	defer neuralConfig.Network.Close()
 
-	window.IMShow(target)
-	prob, blob := LocateHeads(target, neuralConfig)
+	window := gocv.NewWindow("Lots-o-hats")
+	defer window.Close()
 
-	const confidenceThresh = 0.5
-	for i := 0; i < prob.Total(); i += 7 {
-		confidence := prob.GetFloatAt(0, i+2)
-		if confidence > confidenceThresh {
-			roiRect := GetInterestingRect(prob, target, i)
-			scaledHat := ScaleImageToRegion(hats[i%len(hats)], roiRect, config)
-			defer scaledHat.Close()
-			PasteHat(scaledHat, roiRect, &target, config)
-			window.IMShow(target)
-		}
-	}
+  var target gocv.Mat
+  var webcam *gocv.VideoCapture
+  var e error
+  targetFileName := os.Args[2]
+  repeat := IsDeviceId(targetFileName)
+  if repeat {
+    webcam, e = gocv.OpenVideoCapture(targetFileName)
+    if e != nil {
+      log.Fatal(e)
+    }
+    defer webcam.Close()
+    target = gocv.NewMat()
+    if ok := webcam.Read(&target); !ok {
+		  log.Fatal(errors.New(fmt.Sprintf(
+        "Webcam closed: %v\n", targetFileName)))
+    }
+  } else {
+	  target = ImageFFile(targetFileName)
+  }
+	defer target.Close()
 
-	prob.Close()
-	blob.Close()
+  window.IMShow(target)
+  for {
+    prob, blob := LocateHeads(target, neuralConfig)
 
+    const confidenceThresh = 0.5
+    for i := 0; i < prob.Total(); i += 7 {
+      confidence := prob.GetFloatAt(0, i+2)
+      if confidence > confidenceThresh {
+        roiRect := GetInterestingRect(prob, target, i)
+        scaledHat := ScaleImageToRegion(hats[i%len(hats)], roiRect, config)
+        defer scaledHat.Close()
+        PasteHat(scaledHat, roiRect, &target, config)
+      }
+    }
+    window.IMShow(target)
 
-	for {
-		if window.WaitKey(1) >= 0 {
-			break
-		}
-	}
+    prob.Close()
+    blob.Close()
+    if !repeat || window.WaitKey(1) >= 0 {
+      break
+    } else if ok := webcam.Read(&target); !ok {
+      log.Fatal(errors.New(fmt.Sprintf(
+        "Webcam closed: %v\n", targetFileName)))
+    }
+  }
+
+  if !repeat {
+    for {
+      if window.WaitKey(1) >= 0 {
+        break
+      }
+    }
+  }
 }
