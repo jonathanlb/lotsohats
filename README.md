@@ -3,7 +3,9 @@ Deface your image or stream of images with cephalic accessories.  To validate my
 
 ## How to run
 <img align="right" width="200px" src="data/example.png">
-Download [deep neural network classifier readable by GoCV](https://godoc.org/gocv.io/x/gocv#ReadNet) to detect faces, e.g. Caffe or TensorFlow, or some other image feature.
+
+Download any neural network classifier [readable by GoCV](https://godoc.org/gocv.io/x/gocv#ReadNet) to detect faces, e.g. Caffe or TensorFlow, or some other image feature.
+
 ```bash
 cd data
 wget https://github.com/opencv/opencv_3rdparty/raw/dnn_samples_face_detector_20170830/res10_300x300_ssd_iter_140000.caffemodel
